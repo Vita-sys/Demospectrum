@@ -40,7 +40,11 @@ public class AnomalyDetector {
      */
     public double calculateChangePercent(long previous, long current) {
         if (previous == 0) return 0;
-        return ((double) (current - previous) / previous) * 100.0;
+        double change = ((double) (current - previous) / previous) * 100.0;
+        // Ограничиваем: слишком большие значения — ошибки в исходных данных
+        if (change > 1000) change = 1000;
+        if (change < -1000) change = -1000;
+        return change;
     }
 
     public double getThreshold() {
