@@ -48,10 +48,10 @@ public class MapDataService {
      * @param year Год
      * @param threshold Порог аномалии (например, 5.0)
      */
-    public List<City> loadCitiesFiltered(int year, double threshold) throws SQLException {
-        List<City> cities = new ArrayList<>();
+    public java.util.List<ru.miet.demospectrum.model.City> loadCitiesFiltered(int year, double threshold) throws java.sql.SQLException {
+        java.util.List<ru.miet.demospectrum.model.City> cities = new java.util.ArrayList<>();
 
-        // SQL: берем города, у которых в указанном году изменение > порога (или <- порога)
+        // Добавили p.change_percent в SELECT
         String sql =
                 "SELECT DISTINCT c.id, c.name, c.latitude, c.longitude, p.change_percent " +
                         "FROM cities c " +
@@ -63,17 +63,18 @@ public class MapDataService {
                         "ORDER BY ABS(p.change_percent) DESC " +
                         "LIMIT 100";
 
-        try (Connection conn = DBConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        try (java.sql.Connection conn = ru.miet.demospectrum.config.DBConnection.getConnection();
+             java.sql.PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setInt(1, year);
             pstmt.setDouble(2, threshold);
-            try (ResultSet rs = pstmt.executeQuery()) {
+            try (java.sql.ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
-                    City city = new City();
+                    ru.miet.demospectrum.model.City city = new ru.miet.demospectrum.model.City();
                     city.setId(rs.getInt("id"));
                     city.setName(rs.getString("name"));
                     city.setLatitude(rs.getDouble("latitude"));
                     city.setLongitude(rs.getDouble("longitude"));
+                    city.setChangePercent(rs.getDouble("change_percent")); // Берем процент из БД
                     cities.add(city);
                 }
             }

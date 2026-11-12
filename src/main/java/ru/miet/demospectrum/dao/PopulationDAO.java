@@ -89,4 +89,20 @@ public class PopulationDAO {
         }
         return false;
     }
+
+    public java.util.List<ru.miet.demospectrum.model.PopulationRecord> getByCityId(int cityId) throws java.sql.SQLException {
+        java.util.List<ru.miet.demospectrum.model.PopulationRecord> records = new java.util.ArrayList<>();
+        String sql = "SELECT id, city_id, year, population, change_percent, is_anomaly " +
+                "FROM population WHERE city_id = ? ORDER BY year";
+
+        try (java.sql.Connection conn = DBConnection.getConnection();
+             java.sql.PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, cityId);
+            try (java.sql.ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) records.add(mapRow(rs));
+            }
+        }
+        return records;
+    }
+
 }

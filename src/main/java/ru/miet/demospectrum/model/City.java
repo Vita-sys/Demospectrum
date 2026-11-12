@@ -8,6 +8,7 @@ public class City extends DataEntity {
     private int regionId;
     private double latitude;
     private double longitude;
+    private double changePercent;
 
     public City() {}
 
@@ -46,6 +47,14 @@ public class City extends DataEntity {
     public String toString() {
         return String.format("City{id=%d, name='%s', lat=%.4f, lon=%.4f}",
                 id, name, latitude, longitude);
+    }
+
+    public double getChangePercent() {
+        return changePercent;
+    }
+
+    public void setChangePercent(double changePercent) {
+        this.changePercent = changePercent;
     }
 
     @Override

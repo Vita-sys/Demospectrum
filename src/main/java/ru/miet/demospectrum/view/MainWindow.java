@@ -92,6 +92,34 @@ public class MainWindow extends JFrame {
         helpMenu.add(aboutItem);
 
         menuBar.add(helpMenu);
+
+        // === Меню "Вид" (Темы) ===
+        JMenu viewMenu = new JMenu("Вид");
+
+        JMenuItem lightThemeItem = new JMenuItem("Светлая тема");
+        lightThemeItem.addActionListener(e -> {
+            try {
+                UIManager.setLookAndFeel(new com.formdev.flatlaf.FlatLightLaf());
+                SwingUtilities.updateComponentTreeUI(this);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this, "Ошибка темы: " + ex.getMessage());
+            }
+        });
+
+        JMenuItem darkThemeItem = new JMenuItem("Тёмная тема");
+        darkThemeItem.addActionListener(e -> {
+            try {
+                UIManager.setLookAndFeel(new com.formdev.flatlaf.FlatDarkLaf());
+                SwingUtilities.updateComponentTreeUI(this);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this, "Ошибка темы: " + ex.getMessage());
+            }
+        });
+
+        viewMenu.add(lightThemeItem);
+        viewMenu.add(darkThemeItem);
+        menuBar.add(viewMenu);
+
         return menuBar;
     }
 
