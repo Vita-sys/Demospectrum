@@ -7,8 +7,6 @@ import ru.miet.demospectrum.service.MapDataService;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.io.File;
-import java.io.FileWriter;
 import java.util.List;
 
 public class MapPanel extends JPanel {
@@ -18,15 +16,22 @@ public class MapPanel extends JPanel {
     private JLabel infoLabel;
     private MapDataService dataService = new MapDataService();
 
-    // Текущие настройки фильтрации
-    private int currentYear = 1990;        // Год
-    private double currentThreshold = 10.0; // Порог аномалии (%)
+    private int currentYear = 1990;
+    private double currentThreshold = 10.0;
 
-    // Компоненты управления
     private JSlider yearSlider;
     private JSlider thresholdSlider;
     private JLabel yearLabel;
     private JLabel thresholdLabel;
+
+    // Вспомогательный класс-мост для вызова Java-методов из JavaScript карты
+    public class MapBridge {
+        public void openChart(String cityName) {
+            SwingUtilities.invokeLater(() -> showChartForCity(cityName));
+        }
+    }
+
+    private final MapBridge mapBridge = new MapBridge();
 
     public MapPanel() {
         setLayout(new BorderLayout());
@@ -34,12 +39,10 @@ public class MapPanel extends JPanel {
     }
 
     private void initUI() {
-        // === 1. Панель управления (сверху) ===
         JPanel controlPanel = new JPanel();
         controlPanel.setLayout(new BoxLayout(controlPanel, BoxLayout.Y_AXIS));
         controlPanel.setBorder(BorderFactory.createTitledBorder("Фильтры"));
 
-        // 1.1. Слайдер года
         JPanel yearPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         yearLabel = new JLabel("Год: " + currentYear);
         yearSlider = new JSlider(1900, 2025, currentYear);
@@ -55,7 +58,6 @@ public class MapPanel extends JPanel {
         yearPanel.add(yearSlider);
         controlPanel.add(yearPanel);
 
-        // 1.2. Слайдер порога аномалии
         JPanel thresholdPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         thresholdLabel = new JLabel("Порог аномалии: " + (int)currentThreshold + "%");
         thresholdSlider = new JSlider(5, 50, (int)currentThreshold);
@@ -71,7 +73,6 @@ public class MapPanel extends JPanel {
         thresholdPanel.add(thresholdSlider);
         controlPanel.add(thresholdPanel);
 
-        // 1.3. Кнопка открытия карты
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         JButton openMapButton = new JButton("Показать карту");
         openMapButton.addActionListener(e -> openMapInBrowser());
@@ -80,7 +81,6 @@ public class MapPanel extends JPanel {
 
         add(controlPanel, BorderLayout.NORTH);
 
-        // === 2. Таблица (в центре) ===
         String[] columns = {"Город", "Широта", "Долгота", "Изменение (%)"};
         tableModel = new DefaultTableModel(columns, 0) {
             @Override
@@ -89,7 +89,6 @@ public class MapPanel extends JPanel {
             }
         };
         cityTable = new JTable(tableModel);
-        // При двойном клике на город открываем график
         cityTable.addMouseListener(new java.awt.event.MouseAdapter() {
             public void mouseClicked(java.awt.event.MouseEvent evt) {
                 if (evt.getClickCount() == 2) {
@@ -103,37 +102,29 @@ public class MapPanel extends JPanel {
         });
         add(new JScrollPane(cityTable), BorderLayout.CENTER);
 
-        // === 3. Статус (снизу) ===
         infoLabel = new JLabel("Загрузка данных...");
         infoLabel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
         add(infoLabel, BorderLayout.SOUTH);
 
-        // Первоначальная загрузка
         refreshTable();
     }
 
     private void refreshTable() {
         ErrMsgLog logger = new ErrMsgLog();
         try {
-            // Загружаем города с учетом года и порога
             List<City> cities = dataService.loadCitiesFiltered(currentYear, currentThreshold);
-
-            tableModel.setRowCount(0); // Очищаем таблицу
+            tableModel.setRowCount(0);
 
             for (City city : cities) {
-                // Получаем процент изменения для этого города в этом году
                 double change = city.getChangePercent();
-
                 tableModel.addRow(new Object[]{
                         city.getName(),
                         city.getLatitude(),
                         city.getLongitude(),
-                        change
+                        String.format("%.2f", change)
                 });
             }
-
             infoLabel.setText("Год: " + currentYear + " | Порог: " + currentThreshold + "% | Найдено городов: " + cities.size());
-
         } catch (Exception e) {
             logger.addErrWithLog(e);
             infoLabel.setText("Ошибка загрузки: " + e.getMessage());
@@ -142,11 +133,12 @@ public class MapPanel extends JPanel {
 
     private void openMapInBrowser() {
         try {
+            int port = ru.miet.demospectrum.service.TileProxyServer.start();
             List<City> cities = dataService.loadCitiesFiltered(currentYear, currentThreshold);
-            String html = generateHtml(cities);
+            String html = generateHtml(cities, port);
 
             JFrame mapFrame = new JFrame("Карта: " + currentYear + " год (порог " + currentThreshold + "%)");
-            mapFrame.setSize(1000, 700);
+            mapFrame.setSize(1050, 720);
             mapFrame.setLocationRelativeTo(this);
 
             javafx.embed.swing.JFXPanel fxPanel = new javafx.embed.swing.JFXPanel();
@@ -156,17 +148,18 @@ public class MapPanel extends JPanel {
                 javafx.scene.web.WebView webView = new javafx.scene.web.WebView();
                 javafx.scene.web.WebEngine webEngine = webView.getEngine();
 
-                // Шаг 1: Очищаем кэш WebView
-                webEngine.getHistory().getEntries().clear();
-                java.net.CookieHandler.setDefault(new java.net.CookieManager());
+                webView.widthProperty().addListener((obs, oldVal, newVal) ->
+                        webEngine.executeScript("if (window.map) { map.invalidateSize(true); }"));
+                webView.heightProperty().addListener((obs, oldVal, newVal) ->
+                        webEngine.executeScript("if (window.map) { map.invalidateSize(true); }"));
 
-                // Загружаем контент
                 webEngine.loadContent(html);
 
-                // Шаг 3: Увеличиваем задержку до 1000 мс (по совету Джемини)
                 webEngine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
                     if (newState == javafx.concurrent.Worker.State.SUCCEEDED) {
-                        webEngine.executeScript("setTimeout(function() { map.invalidateSize(); }, 1000);");
+                        netscape.javascript.JSObject window = (netscape.javascript.JSObject) webEngine.executeScript("window");
+                        window.setMember("javaApp", mapBridge);
+                        webEngine.executeScript("setTimeout(function() { map.invalidateSize(true); map.fitBounds([[41.0, 27.0], [72.0, 175.0]]); }, 300);");
                     }
                 });
 
@@ -180,62 +173,90 @@ public class MapPanel extends JPanel {
         }
     }
 
-    private String generateHtml(List<City> cities) {
+    private String generateHtml(List<City> cities, int port) {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html><html><head><meta charset='utf-8'/>");
         html.append("<title>Демоспектр — Карта</title>");
-        html.append("<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>");
-        html.append("<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>");
-        html.append("<style> html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; background: #fff; } </style>");
+        html.append("<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css'/>");
+        html.append("<script>window.L_DISABLE_3D = true;</script>");
+        html.append("<script src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js'></script>");
+
+        html.append("<style>");
+        html.append("  * { box-sizing: border-box; }");
+        html.append("  html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #e5e3df; font-family: sans-serif; }");
+        html.append("  .chart-btn { margin-top: 6px; padding: 4px 10px; background: #2b7de9; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }");
+        html.append("  .chart-btn:hover { background: #1b66c9; }");
+        html.append("  .legend { background: rgba(255, 255, 255, 0.92); padding: 10px 12px; border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,0.3); line-height: 20px; font-size: 12px; color: #333; }");
+        html.append("  .legend i { width: 12px; height: 12px; float: left; margin-right: 8px; margin-top: 4px; border-radius: 50%; border: 1px solid #fff; box-shadow: 0 0 2px rgba(0,0,0,0.4); }");
+        html.append("</style>");
+
         html.append("</head><body><div id='map'></div><script>");
 
-        // 1. Включаем режим простых пиксельных координат
-        html.append("var map = L.map('map', { crs: L.CRS.Simple, minZoom: -3, maxZoom: 3 });");
+        html.append("var map = L.map('map', {");
+        html.append("  zoomAnimation: false,");
+        html.append("  fadeAnimation: false,");
+        html.append("  markerZoomAnimation: false");
+        html.append("});");
 
-        // 2. Путь к картинке
-        String imagePath = MapPanel.class.getResource("/world_map.png").toExternalForm();
+        // Сразу показываем всю Россию (от Калининграда до Камчатки)
+        html.append("map.fitBounds([[41.0, 27.0], [72.0, 175.0]]);");
 
-        // 3. Задаем РЕАЛЬНЫЕ размеры карты (13080 x 5870) из ТЗ
-        html.append("var bounds = [[0, 0], [5870, 13080]];");
-        html.append("L.imageOverlay('").append(imagePath).append("', bounds).addTo(map);");
-        html.append("map.fitBounds(bounds);");
+        html.append("L.tileLayer('http://127.0.0.1:").append(port).append("/tiles/{z}/{x}/{y}.png', {");
+        html.append("  maxZoom: 18,");
+        html.append("  attribution: '&copy; OpenStreetMap contributors'");
+        html.append("}).addTo(map);");
 
-        // 4. МАТЕМАТИЧЕСКИЙ ПЕРЕСЧЕТ С КОМПЕНСАЦИЕЙ РАСТЯЖЕНИЯ КАРТИНКИ
+        double midLevel = currentThreshold * 1.5;
+        double highLevel = currentThreshold * 2.5;
+
         if (cities != null) {
             for (City city : cities) {
                 double lat = city.getLatitude();
                 double lon = city.getLongitude();
+                double change = city.getChangePercent();
+                double absChange = Math.abs(change);
 
-                // 1. Пересчет долготы (X) с компенсацией ширины
-                // Картинка растянута по ширине, поэтому используем коэффициент 1.0 (360 градусов = 13080 пикселей)
-                double xPixel = ((lon + 180.0) / 360.0) * 13080.0;
+                String fillColor;
+                int radius;
+                if (absChange >= highLevel) {
+                    fillColor = "#e63946"; // Красный — очень сильная аномалия
+                    radius = 8;
+                } else if (absChange >= midLevel) {
+                    fillColor = "#f4a261"; // Желто-оранжевый — средняя аномалия
+                    radius = 7;
+                } else {
+                    fillColor = "#2a9d8f"; // Зеленый — незначительная аномалия
+                    radius = 6;
+                }
 
-                // 2. Пересчет широты (Y) с компенсацией высоты
-                // Используем формулу Меркатора, но с поправкой на сжатие картинки по высоте
-                double latRad = Math.toRadians(lat);
-                double mercatorY = Math.log(Math.tan(Math.PI / 4.0 + latRad / 2.0));
+                String safeName = city.getName().replace("'", "\\'").replace("\"", "&quot;");
+                String changeStr = String.format(java.util.Locale.US, "%.2f", change);
 
-                // Границы обрезки твоей картинки (снизу -60, сверху 85)
-                double minY = Math.log(Math.tan(Math.PI / 4.0 + Math.toRadians(-60.0) / 2.0));
-                double maxY = Math.log(Math.tan(Math.PI / 4.0 + Math.toRadians(85.0) / 2.0));
+                String popupHtml = "<b>" + safeName + "</b><br>"
+                        + "Год: " + currentYear + "<br>"
+                        + "Аномалия: <b style=\"color:" + fillColor + ";\">" + changeStr + "%</b><br>"
+                        + "<button class=\"chart-btn\" onclick=\"javaApp.openChart(\\'" + safeName + "\\')\">Открыть график</button>";
 
-                // Пересчет Y с учетом того, что картинка сжата по высоте (5870 пикселей)
-                double yPixel = ((mercatorY - minY) / (maxY - minY)) * 5870.0;
-
-                // В Leaflet (CRS.Simple) ось Y перевернута
-                yPixel = 5870.0 - yPixel;
-
-                String xStr = String.format(java.util.Locale.US, "%.2f", xPixel);
-                String yStr = String.format(java.util.Locale.US, "%.2f", yPixel);
-
-                html.append("L.marker([").append(yStr).append(", ").append(xStr).append("])")
-                        .append(".addTo(map)")
-                        .append(".bindPopup('").append(city.getName().replace("'", "\\'")).append("');");
+                html.append(String.format(java.util.Locale.US,
+                        "L.circleMarker([%.6f, %.6f], { radius: %d, fillColor: '%s', color: '#ffffff', weight: 1.5, opacity: 1, fillOpacity: 0.9 })"
+                                + ".addTo(map).bindPopup('%s');",
+                        lat, lon, radius, fillColor, popupHtml));
             }
         }
 
-        // Лечим серые квадраты WebView
-        html.append("setTimeout(function() { map.invalidateSize(); }, 600);");
+        // Добавляем легенду
+        html.append("var legend = L.control({position: 'bottomleft'});");
+        html.append("legend.onAdd = function(map) {");
+        html.append("  var div = L.DomUtil.create('div', 'legend');");
+        html.append(String.format(java.util.Locale.US,
+                "  div.innerHTML = '<b>Уровень аномалии</b><br>' +"
+                        + "'<i style=\"background:#2a9d8f\"></i> Мало (%.1f%% – %.1f%%)<br>' +"
+                        + "'<i style=\"background:#f4a261\"></i> Средне (%.1f%% – %.1f%%)<br>' +"
+                        + "'<i style=\"background:#e63946\"></i> Много (> %.1f%%)';",
+                currentThreshold, midLevel, midLevel, highLevel, highLevel));
+        html.append("  return div;");
+        html.append("};");
+        html.append("legend.addTo(map);");
 
         html.append("</script></body></html>");
         return html.toString();
@@ -243,7 +264,6 @@ public class MapPanel extends JPanel {
 
     private void showChartForCity(String cityName) {
         try {
-            // 1. Ищем ID города
             int cityId = -1;
             java.util.List<City> cities = dataService.loadCitiesFiltered(currentYear, currentThreshold);
             for (City c : cities) {
@@ -257,11 +277,9 @@ public class MapPanel extends JPanel {
                 return;
             }
 
-            // 2. Получаем данные о населении
             ru.miet.demospectrum.dao.PopulationDAO pDao = new ru.miet.demospectrum.dao.PopulationDAO();
             java.util.List<ru.miet.demospectrum.model.PopulationRecord> records = pDao.getByCityId(cityId);
 
-            // 3. Создаем окно с графиком
             JFrame chartFrame = new JFrame("График: " + cityName);
             chartFrame.setSize(800, 600);
             chartFrame.setLocationRelativeTo(this);
@@ -276,5 +294,4 @@ public class MapPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "Ошибка при построении графика: " + ex.getMessage());
         }
     }
-
 }
